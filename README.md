@@ -17,6 +17,11 @@ The goal of this project is to create a bot that recommends the next song in a D
   - Give the user sorting options - set x number of priorities in order
       - ex. 1st priority = key, 2nd priority = BPM -> sort all songs by similar key first, then within each group, sort most similar BPM first
 ### 5. After user chooses a new song, assume steps 2 and 3 remain the same and repeat step 4
-  - Keep a cache of a few songs - allow the user to move back in case they made a mistake etc
+  - Keep a cache of a few songs - allow the user to move back in case they made a mistake etc.
+      - UI: "Now playing", "Recently played" above, "Queued" below; recommendations follow last song in the queue
   - Allow user to reset - clear the current song and show all the songs in the set from step 2
       - Keep cache in case of mistakes
+### 6. Queuing songs: User also has the option to queue a song next, regardless of recommendations.
+  - Allow the user to search songs on Spotify for the song.
+  - After the user selects the song, go to step 2
+  - Allow users to reorder/remove songs from the queue at will
