@@ -3,7 +3,7 @@ The goal of this project is to create a bot that recommends the next song in a D
 
 ## Features
 
-### 1. User picks a song.
+### 1. User picks a song. 
   - Bot analyzes the **key**, **BPM**, **genre**, and **energy** of the song
 ### 2. User specifies subset of songs for the bot to choose from, for example:
   - Liked songs
