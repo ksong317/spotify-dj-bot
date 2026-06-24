@@ -1,5 +1,5 @@
 # spotify-dj-bot
-The goal of this project is to create a bot that recommends the next song in a DJ mix.
+The goal of this project is to create a bot that recommends the next song in a DJ mix. Contrary to popular belief, this isn't really a bot.
 
 ## Features
 
