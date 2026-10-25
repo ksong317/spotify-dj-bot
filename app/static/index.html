@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crossfade</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Crossfade</h1>
+    <p class="subtitle">Remember the mixes you discover. Mark a transition bidirectional if it works both ways.</p>
+    <a class="header-link" href="/graph">Explore graph →</a>
+    <a class="header-link" href="/setlists">Build a set list →</a>
+  </header>
+
+  <main>
+    <section class="panel" id="add-panel">
+      <h2>Add Transition</h2>
+      <form id="add-form">
+        <div class="track-picker">
+          <label>Starting song</label>
+          <div class="search-field" data-role="from">
+            <input type="text" placeholder="Search Spotify..." autocomplete="off">
+            <div class="search-results hidden"></div>
+          </div>
+          <div class="selected-track hidden" data-role="from"></div>
+        </div>
+
+        <div class="arrow" id="direction-arrow">→</div>
+
+        <div class="track-picker">
+          <label>Ending song</label>
+          <div class="search-field" data-role="to">
+            <input type="text" placeholder="Search Spotify..." autocomplete="off">
+            <div class="search-results hidden"></div>
+          </div>
+          <div class="selected-track hidden" data-role="to"></div>
+        </div>
+
+        <label for="notes">Notes</label>
+        <textarea id="notes" rows="3" placeholder="Key changes, cue points, mix ideas..."></textarea>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="bidirectional">
+          <span>Bidirectional — works both ways (A↔B)</span>
+        </label>
+
+        <button type="submit" id="submit-btn" disabled>Save transition</button>
+        <p class="form-message hidden" id="form-message"></p>
+      </form>
+    </section>
+
+    <section class="panel" id="browse-panel">
+      <div class="panel-header">
+        <h2>Browse Transitions</h2>
+        <div class="filter-bar">
+          <div class="search-field filter-search">
+            <input type="text" id="filter-input" placeholder="Search for a song to filter transitions..." autocomplete="off">
+            <div class="search-results hidden" id="filter-results"></div>
+          </div>
+          <button type="button" id="clear-filter" class="secondary hidden">Clear filter</button>
+        </div>
+        <p class="filter-active hidden" id="filter-active"></p>
+      </div>
+      <div id="transitions-list" class="transitions-list">
+        <p class="empty-state">Loading transitions...</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
