@@ -13,21 +13,33 @@ import {
   saveSetListTransition,
   saveTrackDefaults,
   updateSetList,
+  updateSetListItem,
 } from '../api.js';
 import CoreTracks from '../components/setlist/CoreTracks.jsx';
 import PerformanceView from '../components/setlist/PerformanceView.jsx';
 import SetListEditor from '../components/setlist/SetListEditor.jsx';
-import { TRACK, junctionsByPair, reorderedLocally } from '../setlist.js';
+import {
+  TRACK,
+  exportSetListText,
+  formatDuration,
+  junctionsByPair,
+  playedByItem,
+  reorderedLocally,
+  totalDurationSeconds,
+  withTrackDefaults,
+} from '../setlist.js';
 
 export default function SetListPage() {
   const { setListId } = useParams();
   // Kept in the URL so a set list can be opened straight into performance mode.
   const [searchParams, setSearchParams] = useSearchParams();
   const performing = searchParams.get('mode') === 'perform';
+  const filling = !performing && searchParams.get('fill') === 'keys';
   const [detail, setDetail] = useState(null);
   const [state, setState] = useState({ loading: true, error: null });
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState('');
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -64,6 +76,10 @@ export default function SetListPage() {
   const junctions = useMemo(
     () => junctionsByPair(detail?.transitions ?? []),
     [detail],
+  );
+  const played = useMemo(
+    () => playedByItem(detail?.items ?? [], junctions),
+    [detail, junctions],
   );
   const numbers = useMemo(() => {
     const byItemId = new Map();
@@ -132,6 +148,57 @@ export default function SetListPage() {
           return fetchSetList(setListId);
         }),
 
+      // The core-track fill pass writes the same values, but without a full
+      // reload — Tab has to keep moving down the list.
+      saveCoreDefaults: async (trackId, defaults) => {
+        try {
+          const response = await saveTrackDefaults(trackId, defaults);
+          setDetail((previous) =>
+            withTrackDefaults(
+              previous,
+              trackId,
+              response.default_key,
+              response.default_bpm,
+            ),
+          );
+          setState((previous) => ({ ...previous, error: null }));
+          return true;
+        } catch (error) {
+          setState((previous) => ({ ...previous, error: error.message }));
+          return false;
+        }
+      },
+
+      savePartEnergy: async (itemId, energyLevels) => {
+        try {
+          const updated = await updateSetListItem(setListId, itemId, {
+            energy_levels: energyLevels,
+          });
+          setDetail(updated);
+          setState((previous) => ({ ...previous, error: null }));
+          return true;
+        } catch (error) {
+          setState((previous) => ({ ...previous, error: error.message }));
+          return false;
+        }
+      },
+
+      // Play time is per slot, so it does not need a full-editor lock the way
+      // adding or moving songs does.
+      saveDuration: async (itemId, durationSeconds) => {
+        try {
+          const updated = await updateSetListItem(setListId, itemId, {
+            duration_seconds: durationSeconds,
+          });
+          setDetail(updated);
+          setState((previous) => ({ ...previous, error: null }));
+          return true;
+        } catch (error) {
+          setState((previous) => ({ ...previous, error: error.message }));
+          return false;
+        }
+      },
+
       addCoreTrack: (track) => run(() => addCoreTrack(setListId, track.id)),
 
       removeCoreTrack: (trackId) => run(() => deleteCoreTrack(setListId, trackId)),
@@ -141,6 +208,25 @@ export default function SetListPage() {
     }),
     [detail, itemsById, run, setListId],
   );
+
+  const exportList = async () => {
+    const text = exportSetListText(detail);
+    const filename = `${(detail.name || 'set-list').replace(/[<>:"/\\|?*]/g, '').trim() || 'set-list'}.txt`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // Clipboard can be blocked; a file still gets the list out.
+    }
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   const saveName = () => {
     const trimmed = name.trim();
@@ -191,6 +277,8 @@ export default function SetListPage() {
           )}
           <p className="page__subtitle">
             {numbers.size} {numbers.size === 1 ? 'song' : 'songs'}
+            {' · '}
+            {formatDuration(totalDurationSeconds(detail.items))}
             {busy ? ' · saving…' : ''}
           </p>
         </div>
@@ -211,6 +299,12 @@ export default function SetListPage() {
               Perform
             </button>
           </div>
+          <button type="button" className="page__link" onClick={exportList}>
+            {copied ? 'Copied' : 'Export'}
+          </button>
+          <Link className="page__link" to="/tracks">
+            Track info
+          </Link>
           <Link className="page__link" to="/setlists">
             All set lists
           </Link>
@@ -220,13 +314,19 @@ export default function SetListPage() {
       {state.error ? <p className="picker__error">{state.error}</p> : null}
 
       {performing ? (
-        <PerformanceView detail={detail} junctions={junctions} numbers={numbers} />
+        <PerformanceView
+          detail={detail}
+          junctions={junctions}
+          numbers={numbers}
+          played={played}
+        />
       ) : (
-        <div className="setlist__layout">
+        <div className={filling ? 'setlist__layout is-filling' : 'setlist__layout'}>
           <SetListEditor
             detail={detail}
             junctions={junctions}
             numbers={numbers}
+            played={played}
             busy={busy}
             actions={actions}
           />
@@ -235,6 +335,10 @@ export default function SetListPage() {
             coreTracks={detail.core_tracks}
             busy={busy}
             actions={actions}
+            filling={filling}
+            onToggleFill={(on) =>
+              setSearchParams(on ? { fill: 'keys' } : {}, { replace: true })
+            }
           />
         </div>
       )}

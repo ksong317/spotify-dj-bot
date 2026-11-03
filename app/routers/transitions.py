@@ -4,13 +4,11 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Track, Transition
+from app.models import Transition
 from app.schemas import (
     GraphEdge,
     GraphNeighbor,
     GraphResponse,
-    TrackDefaultsResponse,
-    TrackDefaultsUpdate,
     TrackSummary,
     TransitionCreate,
     TransitionResponse,
@@ -43,41 +41,6 @@ def search_spotify_tracks(
     limit: int = Query(default=10, ge=1, le=20),
 ) -> list[TrackSummary]:
     return search_tracks(q, limit=limit)
-
-
-@router.get("/tracks/{track_id}", response_model=TrackSummary)
-def get_spotify_track(track_id: str) -> TrackSummary:
-    track = get_track(track_id)
-    if not track:
-        raise HTTPException(status_code=404, detail="Track not found")
-    return track
-
-
-@router.patch("/tracks/{track_id}/defaults", response_model=TrackDefaultsResponse)
-def set_track_defaults(
-    track_id: str, payload: TrackDefaultsUpdate, db: Session = Depends(get_db)
-) -> TrackDefaultsResponse:
-    """The song's own key and tempo, which every set list falls back to."""
-    # Looking the track up also writes its metadata row, which the defaults hang off.
-    if not get_track(track_id):
-        raise HTTPException(status_code=404, detail="Track not found")
-    track = db.get(Track, track_id)
-    if track is None:
-        raise HTTPException(
-            status_code=503,
-            detail="That song's details are not stored yet, so its key cannot be set.",
-        )
-
-    sent = payload.model_dump(exclude_unset=True)
-    for field, value in sent.items():
-        setattr(track, field, value)
-    db.commit()
-    db.refresh(track)
-    return TrackDefaultsResponse(
-        track_id=track.id,
-        default_key=track.default_key,
-        default_bpm=track.default_bpm,
-    )
 
 
 def _dedupe_transitions(transitions: list[Transition]) -> list[Transition]:

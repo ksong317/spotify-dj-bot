@@ -26,7 +26,12 @@ function End({ keyCode, bpm, defaultKey, defaultBpm }) {
   );
 }
 
-/** Where a mix starts and where it lands, with what to watch out for. */
+/**
+ * Where a mix starts and where it lands, with what to watch out for.
+ *
+ * Which song needs pitching is marked on the song, not here: one seam touches
+ * two of them, and a song stays pitched across every mix that reaches it.
+ */
 export default function MixSummary({ junction, fromItem, toItem, big = false }) {
   const flags = mixFlags(junction, fromItem, toItem);
   if (!hasMixValues(junction) && !fromItem?.default_key && fromItem?.default_bpm == null) {
@@ -73,14 +78,6 @@ export default function MixSummary({ junction, fromItem, toItem, big = false }) 
           }
         >
           {relation.label}
-        </span>
-      ) : null}
-      {flags.pitched ? (
-        <span
-          className="mix__flag mix__flag--pitched"
-          title="Not where the song sits — this has to be pitched by hand"
-        >
-          pitched
         </span>
       ) : null}
       {flags.bpmShift ? (

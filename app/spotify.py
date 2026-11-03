@@ -100,6 +100,9 @@ def get_track(track_id: str) -> TrackSummary | None:
     if stored is not None:
         return _remember(stored)
 
+    if track_store.is_custom(track_id):
+        return None
+
     sp = get_spotify_client()
     try:
         track = sp.track(track_id)
@@ -130,6 +133,7 @@ def get_tracks(track_ids: list[str]) -> dict[str, TrackSummary]:
         for track_id, summary in stored.items():
             tracks_by_id[track_id] = _remember(summary)
         missing = [track_id for track_id in missing if track_id not in stored]
+    missing = [track_id for track_id in missing if not track_store.is_custom(track_id)]
     if not missing:
         return tracks_by_id
 

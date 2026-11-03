@@ -12,6 +12,7 @@ import urllib.request
 
 from app.schemas import TrackSummary
 from app.spotify import search_tracks
+from app.track_store import is_custom
 
 OEMBED_URL = "https://open.spotify.com/oembed?url=https://open.spotify.com/track/{}"
 OEMBED_TIMEOUT_SECONDS = 15
@@ -42,6 +43,8 @@ def recover(track_id: str) -> TrackSummary | None:
     Lets SpotifyUnavailableError propagate: if search itself is throttled then every
     later call fails the same way, so the caller should stop rather than grind through.
     """
+    if is_custom(track_id):
+        return None
     title = fetch_title(track_id)
     if not title:
         return None

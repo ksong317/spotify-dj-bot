@@ -1,6 +1,6 @@
 """Set list routes: running orders built out of logged transitions."""
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import Text, and_, cast, func, or_
+from sqlalchemy import Text, and_, cast, func, or_, select, union
 from sqlalchemy.orm import Session
 
 from app import keys
@@ -21,6 +21,7 @@ from app.schemas import (
     SetListDetail,
     SetListItemCreate,
     SetListItemResponse,
+    SetListItemUpdate,
     SetListReorder,
     SetListSummary,
     SetListTransitionResponse,
@@ -29,7 +30,13 @@ from app.schemas import (
     SuggestionResponse,
     TrackSummary,
 )
-from app.spotify import get_track, get_tracks, search_tracks
+from app.spotify import (
+    SpotifyUnavailableError,
+    get_track,
+    get_tracks,
+    search_tracks,
+)
+from app.track_store import CUSTOM_PREFIX
 
 router = APIRouter(prefix="/api/setlists")
 
@@ -109,6 +116,31 @@ def _junctions(items: list[SetListItem]) -> list[tuple[SetListItem, SetListItem]
     ]
 
 
+def _part_mates(items: list[SetListItem], item: SetListItem) -> list[SetListItem]:
+    """The contiguous run of songs this slot belongs to — one part of the set."""
+    if item.kind != SetListItem.KIND_TRACK:
+        return []
+    try:
+        index = items.index(item)
+    except ValueError:
+        index = next(i for i, candidate in enumerate(items) if candidate.id == item.id)
+    start = index
+    while start > 0 and items[start - 1].kind == SetListItem.KIND_TRACK:
+        start -= 1
+    end = index + 1
+    while end < len(items) and items[end].kind == SetListItem.KIND_TRACK:
+        end += 1
+    return items[start:end]
+
+
+def _inherit_part_energy(items: list[SetListItem], item: SetListItem) -> None:
+    """A song added into a tagged part picks up that part's energy."""
+    for mate in _part_mates(items, item):
+        if mate is not item and mate.energy_levels:
+            item.energy_levels = list(mate.energy_levels)
+            return
+
+
 def _detail(db: Session, set_list: SetList) -> SetListDetail:
     items = _ordered_items(db, set_list.id)
     core_rows = (
@@ -170,6 +202,8 @@ def _detail(db: Session, set_list: SetList) -> SetListDetail:
                 track=tracks_by_id.get(item.track_id) if item.track_id else None,
                 default_key=defaults.get(item.track_id, (None, None))[0],
                 default_bpm=defaults.get(item.track_id, (None, None))[1],
+                duration_seconds=item.duration_seconds,
+                energy_levels=item.energy_levels,
             )
             for item in items
         ],
@@ -279,6 +313,33 @@ def add_item(
     items.insert(index, item)
     db.add(item)
     _renumber(items)
+    if item.kind == SetListItem.KIND_TRACK:
+        _inherit_part_energy(items, item)
+    return _saved(db, set_list)
+
+
+@router.patch("/{set_list_id}/items/{item_id}", response_model=SetListDetail)
+def update_item(
+    set_list_id: int,
+    item_id: int,
+    payload: SetListItemUpdate,
+    db: Session = Depends(get_db),
+) -> SetListDetail:
+    """Set a song's play time, or the energy of the part it sits in."""
+    set_list = _load(db, set_list_id)
+    item = db.get(SetListItem, item_id)
+    if item is None or item.set_list_id != set_list_id:
+        raise HTTPException(status_code=404, detail="Set list slot not found")
+    if item.kind != SetListItem.KIND_TRACK:
+        raise HTTPException(status_code=400, detail="A gap has no duration or energy")
+
+    sent = payload.model_dump(exclude_unset=True)
+    if "duration_seconds" in sent:
+        item.duration_seconds = sent["duration_seconds"]
+    if "energy_levels" in sent:
+        levels = sent["energy_levels"]
+        for mate in _part_mates(_ordered_items(db, set_list_id), item):
+            mate.energy_levels = list(levels) if levels else None
     return _saved(db, set_list)
 
 
@@ -414,6 +475,31 @@ def _anchor(
     return item.track_id, own_key
 
 
+def _library_track_ids():
+    """Songs you have actually done something with.
+
+    The `tracks` table is a metadata cache, not a library: every song Spotify has
+    ever handed back in a search box is written to it, which is why it holds
+    thousands of songs nobody ever chose. Yours are the ones on a transition, in a
+    set list, carrying a key you typed in, or a custom song you created because it
+    is not on Spotify. The rest still turn up when searching Spotify, just not as
+    though you already owned them.
+    """
+    return union(
+        select(Transition.from_track_id),
+        select(Transition.to_track_id),
+        select(SetListItem.track_id).where(SetListItem.track_id.isnot(None)),
+        select(SetListCoreTrack.track_id),
+        select(Track.id).where(
+            or_(
+                Track.default_key.isnot(None),
+                Track.default_bpm.isnot(None),
+                Track.id.startswith(CUSTOM_PREFIX),
+            )
+        ),
+    )
+
+
 def _transitions_from(db: Session, track_id: str) -> list[tuple[str, Transition]]:
     """Songs reachable from this one, with the transition that gets you there."""
     rows = (
@@ -492,10 +578,11 @@ def suggest_next(
         matches = (
             db.query(Track.id)
             .filter(
+                Track.id.in_(_library_track_ids()),
                 or_(
                     Track.name.ilike(pattern),
                     cast(Track.artists, Text).ilike(pattern),
-                )
+                ),
             )
             # Songs whose title opens with what was typed read as the closer match.
             .order_by(Track.name.ilike(f"{needle}%").desc(), Track.name)
@@ -515,8 +602,14 @@ def suggest_next(
         for row in matches.limit(MAX_SUGGESTIONS_PER_SOURCE).all():
             take(row.id, "library", "in your library", None)
 
-        for track in search_tracks(needle, limit=MAX_SUGGESTIONS_PER_SOURCE):
-            take(track.id, "spotify", "from Spotify", None)
+        try:
+            for track in search_tracks(needle, limit=MAX_SUGGESTIONS_PER_SOURCE):
+                take(track.id, "spotify", "from Spotify", None)
+        except SpotifyUnavailableError:
+            # Songs of your own are still worth offering. With none to offer, the
+            # 503 explaining why is more use than an empty list.
+            if not picks:
+                raise
 
     tracks_by_id = get_tracks([track_id for track_id, *_ in picks])
     defaults = _defaults(db, {track_id for track_id, *_ in picks})

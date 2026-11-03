@@ -23,17 +23,36 @@ import {
   BREAK,
   TRACK,
   buildGroups,
+  energyLevelsOf,
   junctionKey,
   orderWithGroupMoved,
   trackOf,
 } from '../../setlist.js';
 import AddSongPanel from './AddSongPanel.jsx';
 import BreakRow from './BreakRow.jsx';
+import EnergyPicker from './EnergyPicker.jsx';
 import JunctionRow from './JunctionRow.jsx';
 import SlotRow from './SlotRow.jsx';
 
 const slotId = (itemId) => `slot-${itemId}`;
 const itemIdOf = (sortableId) => Number(String(sortableId).replace('slot-', ''));
+
+/**
+ * Where a song can be dropped in, named after the slot it sits against.
+ *
+ * Several spots share a position — the start of a part and the end of the part
+ * above it are the same gap in the running order — so naming them is what keeps
+ * one click from opening two search boxes.
+ */
+const END = 'end';
+const spotId = (side, itemId) => `${side}-${itemId}`;
+
+function addSpot(item, side) {
+  return {
+    id: spotId(side, item.id),
+    title: `Add a song ${side} “${item.track?.name ?? 'this slot'}”`,
+  };
+}
 
 function Grip({ label, attributes, listeners, setRef }) {
   return (
@@ -81,7 +100,7 @@ function SortableSlot({ item, children }) {
   );
 }
 
-function GroupHeader({ index, count, songs, isTarget }) {
+function GroupHeader({ index, count, songs, isTarget, energy, busy, onEnergy }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } =
     useDraggable({ id: `group-${index}`, data: { type: 'group', groupIndex: index } });
 
@@ -103,11 +122,19 @@ function GroupHeader({ index, count, songs, isTarget }) {
       <span className="group__count">
         {songs} {songs === 1 ? 'song' : 'songs'}
       </span>
+      <EnergyPicker levels={energy} busy={busy} onChange={onEnergy} />
     </div>
   );
 }
 
-export default function SetListEditor({ detail, junctions, numbers, busy, actions }) {
+export default function SetListEditor({
+  detail,
+  junctions,
+  numbers,
+  played,
+  busy,
+  actions,
+}) {
   const [addAt, setAddAt] = useState(null);
   const [dragging, setDragging] = useState(null);
   const [targetGroup, setTargetGroup] = useState(null);
@@ -119,6 +146,10 @@ export default function SetListEditor({ detail, junctions, numbers, busy, action
   );
 
   const blocks = useMemo(() => buildGroups(detail.items), [detail.items]);
+  const itemsById = useMemo(
+    () => new Map(detail.items.map((item) => [item.id, item])),
+    [detail.items],
+  );
   const sortableIds = useMemo(
     () => detail.items.map((item) => slotId(item.id)),
     [detail.items],
@@ -170,14 +201,26 @@ export default function SetListEditor({ detail, junctions, numbers, busy, action
     actions.reorder(arrayMove(sortableIds, from, to).map(itemIdOf));
   }
 
-  function addPanel(position, title) {
-    if (addAt !== position) return null;
+  /** Read off when the song is added, so a move while the panel sits open is safe. */
+  function spotPosition(id) {
+    if (id === END) return detail.items.length;
+    const [side, itemId] = id.split('-');
+    const item = itemsById.get(Number(itemId));
+    if (!item) return detail.items.length;
+    return side === 'before' ? item.position : item.position + 1;
+  }
+
+  function addPanel(id) {
+    if (addAt?.id !== id) return null;
+    const position = spotPosition(id);
+    const previous = detail.items[position - 1];
     return (
       <AddSongPanel
-        title={title}
+        title={addAt.title}
         busy={busy}
         setListId={detail.id}
-        afterItemId={position > 0 ? detail.items[position - 1]?.id : null}
+        // No mix reaches across a gap, so nothing above one is the song before.
+        afterItemId={previous?.kind === TRACK ? previous.id : null}
         onSelect={(track) => {
           actions.addSong(track, position);
           setAddAt(null);
@@ -186,8 +229,6 @@ export default function SetListEditor({ detail, junctions, numbers, busy, action
       />
     );
   }
-
-  const atEnd = detail.items.length;
 
   return (
     <DndContext
@@ -212,18 +253,17 @@ export default function SetListEditor({ detail, junctions, numbers, busy, action
 
           {blocks.map((block, blockIndex) =>
             block.kind === BREAK ? (
-              <Fragment key={block.id}>
-                <SortableSlot item={block.item}>
-                  {({ grip }) => (
-                    <BreakRow
-                      grip={grip}
-                      busy={busy}
-                      onRemove={() => actions.removeItem(block.item.id)}
-                    />
-                  )}
-                </SortableSlot>
-                {addPanel(block.item.position + 1, 'Add a song after the gap')}
-              </Fragment>
+              // Adding below a gap is the first song of the part under it, so the
+              // gap itself offers nothing: that would be the same spot twice.
+              <SortableSlot key={block.id} item={block.item}>
+                {({ grip }) => (
+                  <BreakRow
+                    grip={grip}
+                    busy={busy}
+                    onRemove={() => actions.removeItem(block.item.id)}
+                  />
+                )}
+              </SortableSlot>
             ) : (
               <div
                 className={
@@ -238,6 +278,11 @@ export default function SetListEditor({ detail, junctions, numbers, busy, action
                   count={groupCount}
                   songs={block.items.length}
                   isTarget={targetGroup === groupIndexBySlot.get(block.items[0].id)}
+                  energy={energyLevelsOf(block.items)}
+                  busy={busy}
+                  onEnergy={(levels) =>
+                    actions.savePartEnergy(block.items[0].id, levels)
+                  }
                 />
 
                 {block.items.map((item, index) => {
@@ -247,6 +292,8 @@ export default function SetListEditor({ detail, junctions, numbers, busy, action
                     : null;
                   return (
                     <Fragment key={item.id}>
+                      {addPanel(spotId('before', item.id))}
+
                       {junction ? (
                         <JunctionRow
                           junction={junction}
@@ -268,20 +315,22 @@ export default function SetListEditor({ detail, junctions, numbers, busy, action
                         {({ grip }) => (
                           <SlotRow
                             item={item}
+                            played={played.get(item.id)}
                             number={numbers.get(item.id)}
                             grip={grip}
                             busy={busy}
+                            onSaveDuration={(seconds) =>
+                              actions.saveDuration(item.id, seconds)
+                            }
                             onRemove={() => actions.removeItem(item.id)}
-                            onAddAfter={() => setAddAt(item.position + 1)}
+                            onAddBefore={() => setAddAt(addSpot(item, 'before'))}
+                            onAddAfter={() => setAddAt(addSpot(item, 'after'))}
                             onSplitAfter={() => actions.addGap(item.position + 1)}
                           />
                         )}
                       </SortableSlot>
 
-                      {addPanel(
-                        item.position + 1,
-                        `Add a song after “${item.track?.name ?? 'this slot'}”`,
-                      )}
+                      {addPanel(spotId('after', item.id))}
                     </Fragment>
                   );
                 })}
@@ -293,7 +342,7 @@ export default function SetListEditor({ detail, junctions, numbers, busy, action
                       className="button button--quiet"
                       disabled={busy}
                       onClick={() =>
-                        setAddAt(block.items[block.items.length - 1].position + 1)
+                        setAddAt(addSpot(block.items[block.items.length - 1], 'after'))
                       }
                     >
                       Add to this part
@@ -305,12 +354,12 @@ export default function SetListEditor({ detail, junctions, numbers, busy, action
           )}
 
           <div className="setlist__footer">
-            {addAt === atEnd ? null : (
+            {addAt?.id === END ? null : (
               <button
                 type="button"
                 className="button"
                 disabled={busy}
-                onClick={() => setAddAt(atEnd)}
+                onClick={() => setAddAt({ id: END, title: 'Add a song to the end' })}
               >
                 Add a song
               </button>
@@ -319,13 +368,13 @@ export default function SetListEditor({ detail, junctions, numbers, busy, action
               type="button"
               className="button button--quiet"
               disabled={busy || detail.items.length === 0}
-              onClick={() => actions.addGap(atEnd)}
+              onClick={() => actions.addGap(detail.items.length)}
               title="Start a separate part of the set after everything above"
             >
               Add a gap
             </button>
           </div>
-          {addPanel(atEnd, 'Add a song to the end')}
+          {addPanel(END)}
         </div>
       </SortableContext>
 

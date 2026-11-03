@@ -85,6 +85,9 @@ export default function SetListsPage() {
           <Link className="page__link" to="/graph">
             Graph
           </Link>
+          <Link className="page__link" to="/tracks">
+            Track info
+          </Link>
         </nav>
       </header>
 

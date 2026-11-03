@@ -32,6 +32,30 @@ def _parse_bpm(value: object) -> float | None:
 CamelotKey = Annotated[str | None, BeforeValidator(_parse_key)]
 Bpm = Annotated[float | None, BeforeValidator(_parse_bpm)]
 
+ENERGY_LEVELS = ("low", "medium", "high")
+EnergyName = Literal["low", "medium", "high"]
+
+
+def _parse_energy_levels(value: object) -> list[str] | None:
+    """Keep the order they were ticked; each level at most once."""
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError("Energy levels must be a list")
+    levels: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if item not in ENERGY_LEVELS:
+            raise ValueError("Energy must be low, medium or high")
+        if item in seen:
+            raise ValueError("Each energy level can only be chosen once")
+        seen.add(item)
+        levels.append(item)
+    return levels or None
+
+
+EnergyLevels = Annotated[list[EnergyName] | None, BeforeValidator(_parse_energy_levels)]
+
 
 class TransitionCreate(BaseModel):
     from_track_id: str = Field(min_length=1, max_length=22)
@@ -48,6 +72,8 @@ class TrackSummary(BaseModel):
     album_art_url: str | None
     preview_url: str | None
     external_url: str
+    # True when the song was typed in here and has no Spotify row.
+    custom: bool = False
 
 
 class TransitionResponse(BaseModel):
@@ -107,6 +133,50 @@ class TrackDefaultsResponse(BaseModel):
     default_bpm: float | None
 
 
+class TrackInfo(BaseModel):
+    """A song together with the key and tempo kept for it, if any has been typed.
+
+    `saved` is what tells a song you have filled in from one a search box merely
+    returned, which is the difference the track info page is built around.
+    """
+
+    track: TrackSummary
+    default_key: str | None = None
+    default_bpm: float | None = None
+    saved: bool = False
+
+
+def _parse_artists(value: object) -> list[str]:
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.split(",")]
+        return [part for part in parts if part]
+    if isinstance(value, list):
+        if not all(isinstance(item, str) for item in value):
+            raise ValueError("Each artist must be text")
+        return [item.strip() for item in value if item.strip()]
+    raise ValueError("Artists must be a name, or names separated by commas")
+
+
+def _strip_title(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Title must be text")
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("Title is required")
+    return stripped
+
+
+class CustomTrackCreate(BaseModel):
+    """A song that is not on Spotify: a title, artists, and optional key and BPM."""
+
+    name: Annotated[str, BeforeValidator(_strip_title)] = Field(
+        min_length=1, max_length=200
+    )
+    artists: Annotated[list[str], BeforeValidator(_parse_artists)] = Field(min_length=1)
+    default_key: CamelotKey = None
+    default_bpm: Bpm = None
+
+
 class SetListCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     notes: str | None = None
@@ -133,6 +203,23 @@ class SetListItemCreate(BaseModel):
     position: int | None = Field(default=None, ge=0)
 
 
+# A day is far longer than any one song is played; it just keeps a mistype out.
+MAX_DURATION_SECONDS = 24 * 60 * 60
+
+
+class SetListItemUpdate(BaseModel):
+    """Only the fields sent are changed. Duration is how long this slot is played.
+
+    Energy is for the whole part this song sits in, in the order the levels were
+    chosen — low then medium is not the same as medium then low.
+    """
+
+    duration_seconds: int | None = Field(
+        default=None, ge=0, le=MAX_DURATION_SECONDS
+    )
+    energy_levels: EnergyLevels = None
+
+
 class SetListReorder(BaseModel):
     """Every slot of the set list, in its new order."""
 
@@ -148,6 +235,10 @@ class SetListItemResponse(BaseModel):
     track: TrackSummary | None = None
     default_key: str | None = None
     default_bpm: float | None = None
+    # Null until a play time is typed in; clients should treat that as zero.
+    duration_seconds: int | None = None
+    # Ordered energy tags for the part; empty or null means none set.
+    energy_levels: list[EnergyName] | None = None
 
 
 class SetListTransitionUpdate(BaseModel):

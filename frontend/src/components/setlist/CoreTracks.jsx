@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   KeyboardSensor,
@@ -19,8 +19,9 @@ import { CSS } from '@dnd-kit/utilities';
 
 import { formatArtists } from '../../api.js';
 import { keyLabel, keySortIndex } from '../../camelot.js';
-import { formatBpm } from '../../setlist.js';
+import { formatBpm, hasOwnDefaults } from '../../setlist.js';
 import AddSongPanel from './AddSongPanel.jsx';
+import CoreTrackDefaultsRow from './CoreTrackDefaultsRow.jsx';
 import KeyDot from './KeyDot.jsx';
 
 function CoreTrackRow({ core, manual, busy, onRemove }) {
@@ -92,9 +93,18 @@ function CoreTrackRow({ core, manual, busy, onRemove }) {
  * Whatever is still missing comes first, because that is the part of the list
  * there is anything to do about.
  */
-export default function CoreTracks({ setListId, coreTracks, busy, actions }) {
+export default function CoreTracks({
+  setListId,
+  coreTracks,
+  busy,
+  actions,
+  filling,
+  onToggleFill,
+}) {
   const [byKey, setByKey] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [fillOrder, setFillOrder] = useState(null);
+  const focusOnOpen = useRef(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -119,6 +129,65 @@ export default function CoreTracks({ setListId, coreTracks, busy, actions }) {
     [sections],
   );
 
+  const stillMissing = coreTracks.filter((core) => !hasOwnDefaults(core)).length;
+
+  useEffect(() => {
+    if (!filling) {
+      setFillOrder(null);
+      focusOnOpen.current = false;
+      return;
+    }
+    setFillOrder((previous) => {
+      const ids = coreTracks.map((core) => core.track_id);
+      if (!previous) {
+        return [
+          ...coreTracks.filter((core) => !hasOwnDefaults(core)),
+          ...coreTracks.filter((core) => hasOwnDefaults(core)),
+        ].map((core) => core.track_id);
+      }
+      const known = new Set(previous);
+      return [
+        ...previous.filter((id) => ids.includes(id)),
+        ...ids.filter((id) => !known.has(id)),
+      ];
+    });
+  }, [filling, coreTracks]);
+
+  const fillList = useMemo(() => {
+    if (!fillOrder) return [];
+    const byId = new Map(coreTracks.map((core) => [core.track_id, core]));
+    return fillOrder.map((id) => byId.get(id)).filter(Boolean);
+  }, [coreTracks, fillOrder]);
+
+  useEffect(() => {
+    if (!filling || !fillList.length || focusOnOpen.current) return undefined;
+    focusOnOpen.current = true;
+    const first =
+      fillList.find((core) => !hasOwnDefaults(core)) ?? fillList[0];
+    const timer = requestAnimationFrame(() => {
+      document.querySelector(`[data-fill-key="${first.track_id}"]`)?.select();
+    });
+    return () => cancelAnimationFrame(timer);
+  }, [filling, fillList]);
+
+  function focusKey(trackId) {
+    const input = document.querySelector(`[data-fill-key="${trackId}"]`);
+    if (!input) return;
+    input.focus();
+    input.select();
+  }
+
+  function handleAdvance(fromTrackId) {
+    const next = fillList.find(
+      (core) => core.track_id !== fromTrackId && !hasOwnDefaults(core),
+    );
+    if (next) {
+      requestAnimationFrame(() => focusKey(next.track_id));
+      return;
+    }
+    document.querySelector('[data-fill-done]')?.focus();
+  }
+
   function handleDragEnd({ active, over }) {
     if (!over || active.id === over.id) return;
     const from = displayed.indexOf(active.id);
@@ -128,30 +197,94 @@ export default function CoreTracks({ setListId, coreTracks, busy, actions }) {
   }
 
   return (
-    <aside className="core">
+    <aside
+      className={filling ? 'core core--fill' : 'core'}
+      onKeyDown={(event) => {
+        if (filling && event.key === 'Escape') {
+          event.preventDefault();
+          onToggleFill(false);
+        }
+      }}
+    >
       <div className="core__header">
         <h2 className="core__heading">Core tracks</h2>
-        <div className="mode mode--small">
+        {filling ? (
           <button
             type="button"
-            className={byKey ? 'mode__option' : 'mode__option is-active'}
-            title="The order you put them in — drag to rearrange"
-            onClick={() => setByKey(false)}
+            className="button button--quiet"
+            tabIndex={-1}
+            onClick={() => onToggleFill(false)}
           >
-            Mine
+            Done
           </button>
-          <button
-            type="button"
-            className={byKey ? 'mode__option is-active' : 'mode__option'}
-            title="Grouped around the wheel, so neighbours mix together"
-            onClick={() => setByKey(true)}
-          >
-            Key
-          </button>
-        </div>
+        ) : (
+          <div className="core__tools">
+            {coreTracks.length ? (
+              <button
+                type="button"
+                className="button button--quiet"
+                title="Type in each core track's own key and tempo"
+                onClick={() => onToggleFill(true)}
+              >
+                Set keys
+              </button>
+            ) : null}
+            <div className="mode mode--small">
+              <button
+                type="button"
+                className={byKey ? 'mode__option' : 'mode__option is-active'}
+                title="The order you put them in — drag to rearrange"
+                onClick={() => setByKey(false)}
+              >
+                Mine
+              </button>
+              <button
+                type="button"
+                className={byKey ? 'mode__option is-active' : 'mode__option'}
+                title="Grouped around the wheel, so neighbours mix together"
+                onClick={() => setByKey(true)}
+              >
+                Key
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {coreTracks.length === 0 ? (
+      {filling ? (
+        <>
+          <p className="core__hint">
+            {stillMissing
+              ? `${stillMissing} ${stillMissing === 1 ? 'song still needs' : 'songs still need'} a key.`
+              : 'Every core track has a key and tempo.'}{' '}
+            Tab through key and BPM; Enter saves and jumps to the next blank one.
+          </p>
+          {fillList.length ? (
+            <ul className="core__list">
+              {fillList.map((core, index) => (
+                <CoreTrackDefaultsRow
+                  key={core.track_id}
+                  core={core}
+                  autoFocus={index === 0 && !hasOwnDefaults(core)}
+                  busy={busy}
+                  onSave={actions.saveCoreDefaults}
+                  onAdvance={handleAdvance}
+                />
+              ))}
+            </ul>
+          ) : (
+            <p className="junction__hint">Nothing pinned yet.</p>
+          )}
+          <button
+            type="button"
+            className="button"
+            data-fill-done
+            onClick={() => onToggleFill(false)}
+          >
+            Done
+          </button>
+        </>
+      ) : coreTracks.length === 0 ? (
         <p className="junction__hint">
           Nothing pinned yet. Add the songs this set has to include and they will be
           tracked here until they land in the running order.
@@ -184,7 +317,7 @@ export default function CoreTracks({ setListId, coreTracks, busy, actions }) {
         </DndContext>
       )}
 
-      {adding ? (
+      {filling ? null : adding ? (
         <AddSongPanel
           title="Pin a song to this set"
           busy={busy}

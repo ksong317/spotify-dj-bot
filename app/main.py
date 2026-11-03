@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 
 from app.database import Base, engine
-from app.routers import setlists, transitions
+from app.routers import setlists, tracks, transitions
 from app.spotify import SpotifyUnavailableError
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -27,6 +27,10 @@ border-radius:6px;padding:.15rem .4rem}</style></head>
 ADDED_COLUMNS = {
     "transitions": {"bidirectional": "BOOLEAN NOT NULL DEFAULT FALSE"},
     "tracks": {"default_key": "VARCHAR(3)", "default_bpm": "DOUBLE PRECISION"},
+    "set_list_items": {
+        "duration_seconds": "INTEGER",
+        "energy_levels": "JSON",
+    },
 }
 
 
@@ -56,6 +60,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Crossfade", lifespan=lifespan)
 app.include_router(transitions.router)
+app.include_router(tracks.router)
 app.include_router(setlists.router)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -85,4 +90,9 @@ def graph() -> Response:
 @app.get("/setlists", response_class=HTMLResponse)
 @app.get("/setlists/{path:path}", response_class=HTMLResponse)
 def set_lists() -> Response:
+    return _single_page_app()
+
+
+@app.get("/tracks", response_class=HTMLResponse)
+def track_info() -> Response:
     return _single_page_app()

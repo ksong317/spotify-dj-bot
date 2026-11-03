@@ -112,6 +112,12 @@ class SetListItem(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     kind: Mapped[str] = mapped_column(String(8), nullable=False, server_default="track")
     track_id: Mapped[str | None] = mapped_column(String(22), nullable=True)
+    # How long this slot is played in this set, in seconds. Null until filled in,
+    # which the rest of the app treats as zero.
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Ordered energy tags for the part this song belongs to, e.g. ["low", "medium"].
+    # Copied onto every song in the part so moving the block keeps the tags.
+    energy_levels: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     set_list: Mapped["SetList"] = relationship(back_populates="items")
 

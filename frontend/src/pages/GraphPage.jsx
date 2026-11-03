@@ -177,6 +177,9 @@ export default function GraphPage() {
           <Link className="page__link" to="/setlists">
             Set lists
           </Link>
+          <Link className="page__link" to="/tracks">
+            Track info
+          </Link>
         </nav>
       </header>
 

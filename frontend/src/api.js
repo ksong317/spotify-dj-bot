@@ -54,6 +54,20 @@ export function saveTrackDefaults(trackId, defaults) {
   });
 }
 
+/* ---------- track info ---------- */
+
+export function searchTrackInfo(query, options) {
+  return request(`/api/tracks/search?q=${encodeURIComponent(query)}&limit=8`, options);
+}
+
+export function fetchTrackInfo(trackId, options) {
+  return request(`/api/tracks/${encodeURIComponent(trackId)}/info`, options);
+}
+
+export function createCustomTrack(body) {
+  return request('/api/tracks/custom', { method: 'POST', body });
+}
+
 /* ---------- set lists ---------- */
 
 const setListPath = (setListId, suffix = '') =>
@@ -85,6 +99,13 @@ export function addSetListItem(setListId, body) {
 
 export function deleteSetListItem(setListId, itemId) {
   return request(setListPath(setListId, `/items/${itemId}`), { method: 'DELETE' });
+}
+
+export function updateSetListItem(setListId, itemId, body) {
+  return request(setListPath(setListId, `/items/${itemId}`), {
+    method: 'PATCH',
+    body,
+  });
 }
 
 export function reorderSetListItems(setListId, itemIds) {

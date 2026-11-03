@@ -13,6 +13,7 @@ from app import track_recovery
 from app.database import SessionLocal
 from app.models import Transition
 from app.spotify import SpotifyUnavailableError, get_tracks
+from app.track_store import is_custom
 
 # Small courtesy gap so a long backfill does not get search throttled too.
 RECOVERY_PAUSE_SECONDS = 0.2
@@ -51,7 +52,11 @@ def main() -> None:
         return
 
     tracks = get_tracks(track_ids)
-    missing = [track_id for track_id in track_ids if track_id not in tracks]
+    missing = [
+        track_id
+        for track_id in track_ids
+        if track_id not in tracks and not is_custom(track_id)
+    ]
     print(f"Resolved by ID lookup: {len(tracks)} of {len(track_ids)} songs.")
 
     if missing:
